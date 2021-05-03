@@ -4,9 +4,10 @@ import numpy as np
 import io
 from util import copyfileobj
 import threading
+import concurrent.futures
 
 PARTITION_ROWS = 40000000  # 4 GB
-size_prefix = '2gb'
+size_prefix = '1gb'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
@@ -67,21 +68,10 @@ def thread_upload(key_name, nr_files, value, bucket, key):
 
 def write_half_partition(key_name, chars, nr_files, bucket):
     file_names = set()
-    thread_list = list()
-    for key, value in chars.items():
-        # thread = threading.Thread(target=thread_upload, args=(key_name, nr_files, value, bucket, key))
-        # thread_list.append(thread)
-        # thread.start()
-        file_name = key_name.split('/')[1]
-        new_file_name = f'{file_name}_{nr_files}'
-        for second_key, second_value in value.items():
-            file_names.add(f'{key}_{second_key}')
-            with open(f's3://{bucket}/{intermediate_files_dir}/{key}_{second_key}/{new_file_name}',
-                      'wb') as intermediate_file:
-                file_bytes = b"".join(second_value)
-                intermediate_file.write(file_bytes)
-    # for t in thread_list:
-    #     t.join()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures_upload = {executor.submit(thread_upload, key_name, nr_files, value, bucket, key): (key, value) for key, value in chars.items()}
+        for future in concurrent.futures.as_completed(futures_upload):
+            file_names |= future.result()
 
     return file_names
 
@@ -119,13 +109,6 @@ def determine_categories(key_name, storage):
         chars = determine_half_partition(chars, line)
         count_rows += 1
 
-        # if count_rows == PARTITION_ROWS:
-        #     file_names = write_half_partition(key_name, chars, nr_files, storage.bucket)
-        #     unique_keys = unique_keys.union(file_names)
-        #     nr_files += 1
-        #     chars = {}
-        #     count_rows = 0
-
     # write remainings
     if chars:
         file_names = write_half_partition(key_name, chars, nr_files, storage.bucket)
@@ -138,7 +121,6 @@ def sort_category(category_key_name, storage):
     keys = storage_client.list_keys(storage.bucket, f'{intermediate_files_dir}/{category_key_name}/')
     # keys = storage_client.list_keys(storage.bucket, f'{category_key_name}/')
 
-    # lines = []
     buf = io.BytesIO()
 
     for key_name in keys:
@@ -146,8 +128,6 @@ def sort_category(category_key_name, storage):
                   transport_params=dict(client=storage.get_client())) as myfile:
             copyfileobj(myfile, buf)
 
-        # for line in iterate_file(f's3://{storage.bucket}/{key_name}'):
-        #     lines.append(line)
 
     category_buffer = buf.getbuffer()
     np_array = np.frombuffer(
@@ -156,9 +136,6 @@ def sort_category(category_key_name, storage):
     del category_buffer
     np_array = np.sort(np_array, order='key')
 
-    # np_array = np.array(lines, dtype=np.dtype([('sorted', 'bytes', 1), ('key', 'bytes', 9), ('value', 'bytes', 90)]))
-    # del lines
-    # np_array = np.sort(np_array, order='key')
     with open(f's3://{storage.bucket}/{output_prefix}/{category_key_name}', 'wb',
               transport_params=dict(client=storage.get_client())) as sorted_file:
         sorted_file.write(memoryview(np_array))
