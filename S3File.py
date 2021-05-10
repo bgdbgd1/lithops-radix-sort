@@ -33,24 +33,6 @@ class S3File(io.RawIOBase):
     def seekable(self):
         return True
 
-    def get_object(self, size):
-        if size == -1:
-            # Read to the end of the file
-            range_header = "bytes=%d-" % self.position
-            self.seek(offset=0, whence=io.SEEK_END)
-        else:
-            new_position = self.position + size
-
-            # If we're going to read beyond the end of the object, return
-            # the entire object.
-            if new_position >= self.size:
-                return self.read()
-
-            range_header = "bytes=%d-%d" % (self.position, new_position - 1)
-            self.seek(offset=size, whence=io.SEEK_CUR)
-
-        return self.s3_object.get(Range=range_header)["Body"]
-
     def read(self, size=-1):
         if size == -1:
             # Read to the end of the file
@@ -64,7 +46,7 @@ class S3File(io.RawIOBase):
             if new_position >= self.size:
                 return self.read()
 
-            range_header = "bytes=%d-%d" % (self.position, new_position)
+            range_header = "bytes=%d-%d" % (self.position, new_position - 1)
             self.seek(offset=size, whence=io.SEEK_CUR)
 
         return self.s3_object.get(Range=range_header)["Body"].read()

@@ -45,7 +45,7 @@ for i in range(nr_subcats):
         }})
 
 number_of_lambda_sessions_phase_1 = 1
-number_of_lambda_sessions_phase_2 = 1
+number_of_lambda_sessions_phase_2 = 3
 
 
 def iterate_file(filename):
@@ -122,12 +122,13 @@ def determine_categories(key_name, storage):
 
 def sort_category(category_key_name, storage):
     s3 = boto3.resource("s3")
-    for category_partition_name, files in category_key_name.items():
+    for category_partition_name, indexes_and_files in category_key_name.items():
         buf = io.BytesIO()
-        for file_name, indexes in files.items():
+        for file_name in indexes_and_files['files']:
             s3_object = s3.Object(bucket_name=storage.bucket, key=f'{intermediate_files_dir}/{file_name}')
-            s3file = S3File(s3_object, position=indexes['start_index']*100)
-            file_content = s3file.read(size=indexes['end_index']*100 - indexes['start_index']*100)
+            s3file = S3File(s3_object, position=indexes_and_files['start_index'] * 100)
+            file_content = s3file.read(
+                size=(indexes_and_files['end_index'] + 1) * 100 - indexes_and_files['start_index'] * 100)
             buf.write(file_content)
 
         category_buffer = buf.getbuffer()
@@ -174,21 +175,16 @@ def sort():
             for category_partition_name, file_with_indexes in file.items():
                 if not formatted.get(category_partition_name):
                     formatted[category_partition_name] = {
-                        file_with_indexes['file_name']: {
                             'start_index': file_with_indexes['start_index'],
-                            'end_index': file_with_indexes['end_index']
+                            'end_index': file_with_indexes['end_index'],
+                            'files': [file_with_indexes['file_name']]
                         }
-                    }
                 else:
-                    formatted[category_partition_name].update({
-                        file_with_indexes['file_name']: {
-                            'start_index': file_with_indexes['start_index'],
-                            'end_index': file_with_indexes['end_index']
-                        }
-                    })
+                    formatted[category_partition_name]['files'].append(file_with_indexes['file_name'])
+
         fexec.config['serverless']['runtime_memory'] = 4800
         formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
-        print(formatted_list)
+
         print("================== START PHASE 2 ======================")
         nr_phases = 0
         for nr_phases in range(number_of_lambda_sessions_phase_2):
@@ -205,7 +201,6 @@ def sort():
                                                                (nr_phases + 1) * (len(
                                                                    formatted_list) // number_of_lambda_sessions_phase_2):])
             sort_content_result = fexec.get_result(sort_categories_futures)
-
         print("DONE")
 
 
