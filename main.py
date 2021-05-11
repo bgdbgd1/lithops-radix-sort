@@ -7,42 +7,10 @@ import concurrent.futures
 import boto3
 from S3File import S3File
 
-# PARTITION_ROWS = 40000000  # 4 GB
 size_prefix = '20mb-binary'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
-
-number_of_subcategories = 5
-
-nr_subcats = number_of_subcategories
-if 95 % number_of_subcategories != 0:
-    nr_subcats = number_of_subcategories + 1
-
-subcategories = {}
-
-for i in range(nr_subcats):
-    if i == 0:
-        subcategories.update(
-            {
-                i: {
-                    'min': None,
-                    'max': (i + 1) * (95 // number_of_subcategories)
-                }
-            }
-        )
-    elif i == nr_subcats - 1:
-        subcategories.update({
-            i: {
-                'min': i * (95 // number_of_subcategories),
-                'max': None
-            }
-        })
-    else:
-        subcategories.update({i: {
-            'min': i * (95 // number_of_subcategories),
-            'max': (i + 1) * (95 // number_of_subcategories)
-        }})
 
 number_of_lambda_sessions_phase_1 = 1
 number_of_lambda_sessions_phase_2 = 3
@@ -187,7 +155,7 @@ def sort():
                     })
         # fexec.config['serverless']['runtime_memory'] = 4800
         formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
-        print(formatted_list)
+
         print("================== START PHASE 2 ======================")
         nr_phases = 0
         for nr_phases in range(number_of_lambda_sessions_phase_2):
