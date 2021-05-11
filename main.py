@@ -8,7 +8,7 @@ import boto3
 from S3File import S3File
 
 # PARTITION_ROWS = 40000000  # 4 GB
-size_prefix = '1000gb-1gb'
+size_prefix = '20mb-binary'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
@@ -68,7 +68,7 @@ def determine_categories(key_name, storage):
 
     category_buffer = buf.getbuffer()
     del buf
-    record_arr = np.frombuffer(category_buffer, dtype=np.dtype([('key', 'bytes', 2), ('value', 'bytes', 98)]))
+    record_arr = np.frombuffer(category_buffer, dtype=np.dtype([('key', 'V2'), ('rest', 'V98')]))
     del category_buffer
     record_arr = np.sort(record_arr, order='key')
     sorted_file_name = key_name.split('/')[1]
@@ -79,21 +79,19 @@ def determine_categories(key_name, storage):
     first_char = None
     start_index = 0
     current_file_number_per_first_char = 1
-
-    num_subcats = 5
-    diff = 95 / num_subcats
+    num_subcats = 2
+    diff = 265 // num_subcats
     lower_margin = 0
     upper_margin = diff
     new_file_name = ''
     nr_elements = 0
     for nr_elements, rec in enumerate(record_arr):
+        key_array = bytearray(rec[0])
         if first_char is None:
-            first_char = rec[0][0]
-
+            first_char = key_array[0]
         new_file_name = f'{first_char}_{current_file_number_per_first_char}'
-        rec_diff = rec[0][1] - 32
 
-        if rec[0][0] != first_char or (rec_diff < lower_margin or rec_diff > upper_margin):
+        if key_array[0] != first_char or (key_array[1] < lower_margin or key_array[1] > upper_margin):
             locations[new_file_name] = {
                 'start_index': start_index,
                 'end_index': nr_elements - 1,
@@ -101,15 +99,15 @@ def determine_categories(key_name, storage):
             }
             current_file_number_per_first_char += 1
             lower_margin = upper_margin + 1
-            upper_margin = upper_margin + diff
+            upper_margin = lower_margin + diff
             start_index = nr_elements
 
-            if rec[0][0] != first_char:
+            if key_array[0] != first_char:
                 current_file_number_per_first_char = 1
                 start_index = nr_elements
                 lower_margin = 0
                 upper_margin = diff
-                first_char = rec[0][0]
+                first_char = key_array[0]
 
     locations[new_file_name] = {
         'start_index': start_index,
@@ -122,19 +120,19 @@ def determine_categories(key_name, storage):
 
 def sort_category(category_key_name, storage):
     s3 = boto3.resource("s3")
-    for category_partition_name, indexes_and_files in category_key_name.items():
+    for category_partition_name, files in category_key_name.items():
         buf = io.BytesIO()
-        for file_name in indexes_and_files['files']:
+        for file_name, indexes in files.items():
             s3_object = s3.Object(bucket_name=storage.bucket, key=f'{intermediate_files_dir}/{file_name}')
-            s3file = S3File(s3_object, position=indexes_and_files['start_index'] * 100)
+            s3file = S3File(s3_object, position=indexes['start_index'] * 100)
             file_content = s3file.read(
-                size=(indexes_and_files['end_index'] + 1) * 100 - indexes_and_files['start_index'] * 100)
+                size=(indexes['end_index'] + 1) * 100 - indexes['start_index'] * 100)
             buf.write(file_content)
 
         category_buffer = buf.getbuffer()
         del buf
         np_array = np.frombuffer(
-            category_buffer, dtype=np.dtype([('key', 'bytes', 10), ('value', 'bytes', 90)])
+            category_buffer, dtype=np.dtype([('sorted', 'V1'), ('key', 'V9'), ('value', 'V90')])
         )
         del category_buffer
         np_array = np.sort(np_array, order='key')
@@ -175,16 +173,21 @@ def sort():
             for category_partition_name, file_with_indexes in file.items():
                 if not formatted.get(category_partition_name):
                     formatted[category_partition_name] = {
+                        file_with_indexes['file_name']: {
                             'start_index': file_with_indexes['start_index'],
-                            'end_index': file_with_indexes['end_index'],
-                            'files': [file_with_indexes['file_name']]
+                            'end_index': file_with_indexes['end_index']
                         }
+                    }
                 else:
-                    formatted[category_partition_name]['files'].append(file_with_indexes['file_name'])
-
-        fexec.config['serverless']['runtime_memory'] = 4800
+                    formatted[category_partition_name].update({
+                        file_with_indexes['file_name']: {
+                            'start_index': file_with_indexes['start_index'],
+                            'end_index': file_with_indexes['end_index']
+                        }
+                    })
+        # fexec.config['serverless']['runtime_memory'] = 4800
         formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
-
+        print(formatted_list)
         print("================== START PHASE 2 ======================")
         nr_phases = 0
         for nr_phases in range(number_of_lambda_sessions_phase_2):
