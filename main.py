@@ -14,11 +14,7 @@ intermediate_files_dir = f'{input_prefix}-intermediate-files'
 
 number_of_lambda_sessions_phase_1 = 1
 number_of_lambda_sessions_phase_2 = 1
-
-
-def iterate_file(filename):
-    for line in open(filename, 'rb'):
-        yield line
+RUNTIME = 'bogdan/radix-sorting-container-100-mb-files'
 
 
 def upload_sorted_initial_file(bucket, key_name, record_arr):
@@ -121,7 +117,7 @@ def sort_category(category_key_name, storage):
 
 
 def sort():
-    with FunctionExecutor(runtime='bogdan/radix-sorting-container-100-mb-files') as fexec:
+    with FunctionExecutor(runtime=RUNTIME) as fexec:
         bucket = fexec.config['lithops']['storage_bucket']
         storage_client = Storage()
 
