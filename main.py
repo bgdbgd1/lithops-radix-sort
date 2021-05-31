@@ -7,13 +7,13 @@ import concurrent.futures
 import boto3
 from S3File import S3File
 
-size_prefix = '20mb-binary'
+size_prefix = '1000gb-binary'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
 
 number_of_lambda_sessions_phase_1 = 1
-number_of_lambda_sessions_phase_2 = 3
+number_of_lambda_sessions_phase_2 = 1
 
 
 def iterate_file(filename):
@@ -24,6 +24,13 @@ def iterate_file(filename):
 def upload_sorted_initial_file(bucket, key_name, record_arr):
     with open(f's3://{bucket}/{intermediate_files_dir}/{key_name}', 'wb') as sorted_file:
         sorted_file.write(memoryview(record_arr))
+
+
+def read_file(s3, bucket, file_name, indexes):
+    s3_object = s3.Object(bucket_name=bucket, key=f'{intermediate_files_dir}/{file_name}')
+    s3file = S3File(s3_object, position=indexes[0] * 100)
+    return s3file.read(
+        size=(indexes[1] + 1) * 100 - indexes[0] * 100)
 
 
 def determine_categories(key_name, storage):
@@ -90,11 +97,15 @@ def sort_category(category_key_name, storage):
     s3 = boto3.resource("s3")
     for category_partition_name, files in category_key_name.items():
         buf = io.BytesIO()
+        # with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        #     futures = {executor.submit(read_file, s3, storage.bucket, file_name, indexes) for file_name, indexes in files.items()}
+        #     for future in concurrent.futures.as_completed(futures):
+        #         buf.write(future.result())
         for file_name, indexes in files.items():
             s3_object = s3.Object(bucket_name=storage.bucket, key=f'{intermediate_files_dir}/{file_name}')
-            s3file = S3File(s3_object, position=indexes['start_index'] * 100)
+            s3file = S3File(s3_object, position=indexes[0] * 100)
             file_content = s3file.read(
-                size=(indexes['end_index'] + 1) * 100 - indexes['start_index'] * 100)
+                size=(indexes[1] + 1) * 100 - indexes[0] * 100)
             buf.write(file_content)
 
         category_buffer = buf.getbuffer()
@@ -141,22 +152,20 @@ def sort():
             for category_partition_name, file_with_indexes in file.items():
                 if not formatted.get(category_partition_name):
                     formatted[category_partition_name] = {
-                        file_with_indexes['file_name']: {
-                            'start_index': file_with_indexes['start_index'],
-                            'end_index': file_with_indexes['end_index']
-                        }
+                        file_with_indexes['file_name']:
+                            [file_with_indexes['start_index'], file_with_indexes['end_index']]
                     }
                 else:
                     formatted[category_partition_name].update({
-                        file_with_indexes['file_name']: {
-                            'start_index': file_with_indexes['start_index'],
-                            'end_index': file_with_indexes['end_index']
-                        }
+                        file_with_indexes['file_name']:
+                            [file_with_indexes['start_index'], file_with_indexes['end_index']]
+
                     })
-        # fexec.config['serverless']['runtime_memory'] = 4800
+        fexec.config['serverless']['runtime_memory'] = 4800
         formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
 
         print("================== START PHASE 2 ======================")
+
         nr_phases = 0
         for nr_phases in range(number_of_lambda_sessions_phase_2):
             sort_categories_futures = fexec.map(sort_category, formatted_list[
