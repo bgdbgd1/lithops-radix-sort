@@ -7,14 +7,14 @@ import concurrent.futures
 import boto3
 from S3File import S3File
 
-size_prefix = '1000gb-binary'
+size_prefix = '1000mb-2files-binary'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
 
 number_of_lambda_sessions_phase_1 = 1
-number_of_lambda_sessions_phase_2 = 1
-RUNTIME = 'bogdan/radix-sorting-container-100-mb-files'
+number_of_lambda_sessions_phase_2 = 4
+RUNTIME = 'bogdan/lithops-sorting-container'
 
 
 def upload_sorted_initial_file(bucket, key_name, record_arr):
@@ -44,9 +44,7 @@ def determine_categories(key_name, storage):
     record_arr = np.sort(record_arr, order='key')
     sorted_file_name = key_name.split('/')[1]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        executor.submit(upload_sorted_initial_file, storage.bucket, sorted_file_name, record_arr)
-
+    upload_sorted_initial_file(storage.bucket, sorted_file_name, record_arr)
     first_char = None
     start_index = 0
     current_file_number_per_first_char = 1
