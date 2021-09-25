@@ -3,18 +3,20 @@ from smart_open import open
 import numpy as np
 import io
 from util import copyfileobj
-import concurrent.futures
 import boto3
 from S3File import S3File
+import logging
 
-size_prefix = '1000mb-2files-binary'
+size_prefix = '10mb-10files-binary'
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
 
 number_of_lambda_sessions_phase_1 = 1
-number_of_lambda_sessions_phase_2 = 4
-RUNTIME = 'bogdan/lithops-sorting-container'
+number_of_lambda_sessions_phase_2 = 1
+RUNTIME = 'bogdan/lithops-sort'
+
+logger = logging.getLogger("lithops.handler")
 
 
 def upload_sorted_initial_file(bucket, key_name, record_arr):
@@ -32,19 +34,34 @@ def read_file(s3, bucket, file_name, indexes):
 def determine_categories(key_name, storage):
     buf = io.BytesIO()
     locations = {}
+    print("DETERMINE CATEGORIES PHASE")
+    print(f"[WORKER {key_name}] Start downloading initial file.")
 
     with open(f's3://{storage.bucket}/{key_name}', 'rb',
               transport_params=dict(client=storage.get_client())) as myfile:
         copyfileobj(myfile, buf)
 
+    print(f"[WORKER {key_name}] Finish downloading initial file.")
+
     category_buffer = buf.getbuffer()
     del buf
     record_arr = np.frombuffer(category_buffer, dtype=np.dtype([('key', 'V2'), ('rest', 'V98')]))
     del category_buffer
+
+    print(f"[WORKER {key_name}] Start first sorting.")
+
     record_arr = np.sort(record_arr, order='key')
+
+    print(f"[WORKER {key_name}] Finish first sorting.")
+
     sorted_file_name = key_name.split('/')[1]
 
+    print(f"[WORKER {key_name}] Start uploading first sorted file.")
+
     upload_sorted_initial_file(storage.bucket, sorted_file_name, record_arr)
+
+    print(f"[WORKER {key_name}] Finish uploading first sorted file.")
+
     first_char = None
     start_index = 0
     current_file_number_per_first_char = 1
@@ -83,11 +100,12 @@ def determine_categories(key_name, storage):
         'end_index': nr_elements,
         'file_name': sorted_file_name
     }
-
+    print(f"[WORKER {key_name}] Finish 'determine categories' phase.")
     return locations
 
 
 def sort_category(category_key_name, storage):
+    print("SORT CATEGORY PHASE")
     s3 = boto3.resource("s3")
     for category_partition_name, files in category_key_name.items():
         buf = io.BytesIO()
@@ -96,10 +114,12 @@ def sort_category(category_key_name, storage):
         #     for future in concurrent.futures.as_completed(futures):
         #         buf.write(future.result())
         for file_name, indexes in files.items():
+            print(f"Start download interval file {file_name}.")
             s3_object = s3.Object(bucket_name=storage.bucket, key=f'{intermediate_files_dir}/{file_name}')
             s3file = S3File(s3_object, position=indexes[0] * 100)
             file_content = s3file.read(
                 size=(indexes[1] + 1) * 100 - indexes[0] * 100)
+            print(f"Finish download interval file {file_name}.")
             buf.write(file_content)
 
         category_buffer = buf.getbuffer()
@@ -108,10 +128,14 @@ def sort_category(category_key_name, storage):
             category_buffer, dtype=np.dtype([('sorted', 'V1'), ('key', 'V9'), ('value', 'V90')])
         )
         del category_buffer
+        print(f"Start sort final file")
         np_array = np.sort(np_array, order='key')
+        print(f"Finish sort final file")
+        print(f"Start write final file")
         with open(f's3://{storage.bucket}/{output_prefix}/{category_partition_name}', 'wb',
                   transport_params=dict(client=storage.get_client())) as sorted_file:
             sorted_file.write(memoryview(np_array))
+        print(f"Finish write final file")
 
 
 def sort():
@@ -126,6 +150,9 @@ def sort():
 
         formatted = {}
         determine_categories_result = []
+        logger.debug("Start first phase (determine categories)")
+        print("Start first phase (determine categories)")
+
         for i in range(number_of_lambda_sessions_phase_1):
             determine_categories_futures = fexec.map(determine_categories,
                                                      current_keys_list[
@@ -135,12 +162,12 @@ def sort():
             determine_categories_result += fexec.get_result(determine_categories_futures)
 
         # PROCESS REMAININGS
-        if len(current_keys_list) % number_of_lambda_sessions_phase_1 != 0:
-            determine_categories_futures = fexec.map(determine_categories,
-                                                     current_keys_list[
-                                                     (i + 1) * (len(
-                                                         current_keys_list) // number_of_lambda_sessions_phase_1):])
-            determine_categories_result += fexec.get_result(determine_categories_futures)
+        # if len(current_keys_list) % number_of_lambda_sessions_phase_1 != 0:
+        #     determine_categories_futures = fexec.map(determine_categories,
+        #                                              current_keys_list[
+        #                                              (i + 1) * (len(
+        #                                                  current_keys_list) // number_of_lambda_sessions_phase_1):])
+        #     determine_categories_result += fexec.get_result(determine_categories_futures)
 
         for file in determine_categories_result:
             for category_partition_name, file_with_indexes in file.items():
@@ -155,7 +182,7 @@ def sort():
                             [file_with_indexes['start_index'], file_with_indexes['end_index']]
 
                     })
-        fexec.config['serverless']['runtime_memory'] = 4800
+        # fexec.config['serverless']['runtime_memory'] = 4800
         formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
 
         print("================== START PHASE 2 ======================")
@@ -170,11 +197,11 @@ def sort():
             sort_content_result = fexec.get_result(sort_categories_futures)
 
         # Process remainings
-        if len(formatted_list) % number_of_lambda_sessions_phase_2 != 0:
-            sort_categories_futures = fexec.map(sort_category, formatted_list[
-                                                               (nr_phases + 1) * (len(
-                                                                   formatted_list) // number_of_lambda_sessions_phase_2):])
-            sort_content_result = fexec.get_result(sort_categories_futures)
+        # if len(formatted_list) % number_of_lambda_sessions_phase_2 != 0:
+        #     sort_categories_futures = fexec.map(sort_category, formatted_list[
+        #                                                        (nr_phases + 1) * (len(
+        #                                                            formatted_list) // number_of_lambda_sessions_phase_2):])
+        #     sort_content_result = fexec.get_result(sort_categories_futures)
         print("DONE")
 
 
