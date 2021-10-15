@@ -10,7 +10,9 @@ import boto3
 from S3File import S3File
 import logging
 
-size_prefix = '10mb-10files-binary'
+size_prefix = '1gb-1000files'
+num_subcats = 2
+nr_intervals = 256 * num_subcats
 input_prefix = f'{size_prefix}-input'
 output_prefix = f'{size_prefix}-output'
 intermediate_files_dir = f'{input_prefix}-intermediate-files'
@@ -72,7 +74,6 @@ def determine_categories(key_name, storage, experiment_number, id):
     first_char = None
     start_index = 0
     current_file_number_per_first_char = 1
-    num_subcats = 1
     diff = 256 // num_subcats
     lower_margin = 0
     upper_margin = diff
@@ -145,7 +146,7 @@ def sort_category(category_key_name, storage, experiment_number, id):
         print(f"[WORKER {activation_id}] Start write final file")
 
         # TODO: UPDATE BUCKET NAME HERE FOR UPLOADING FINAL FILES
-        with open(f's3://{storage.bucket}/{output_prefix}/{category_partition_name}', 'wb',
+        with open(f's3://output-sorting-experiments/{output_prefix}/{category_partition_name}', 'wb',
                   transport_params=dict(client=storage.get_client())) as sorted_file:
             sorted_file.write(memoryview(np_array))
         print(f"[WORKER {activation_id}] Finish write final file")
@@ -179,8 +180,9 @@ def sort(EXPERIMENT_NUMBER):
         # Save stats to file
         for future in fexec.futures:
             stats.update({future.activation_id: future.stats})
-
-        fexec.plot(dst=f'plots/main_phase1_{size_prefix}_ExpNr_{EXPERIMENT_NUMBER}')
+        if not os.path.isdir(f'plots_{size_prefix}_{nr_intervals}'):
+            os.mkdir(f'plots_{size_prefix}_{nr_intervals}')
+        fexec.plot(dst=f'plots_{size_prefix}_{nr_intervals}/main_phase1_{size_prefix}_intervals{nr_intervals}_ExpNr_{EXPERIMENT_NUMBER}')
         # PROCESS REMAININGS
         # if len(current_keys_list) % number_of_lambda_sessions_phase_1 != 0:
         #     determine_categories_futures = fexec.map(determine_categories,
@@ -206,9 +208,10 @@ def sort(EXPERIMENT_NUMBER):
                                 [file_with_indexes['start_index'], file_with_indexes['end_index']]
 
                         })
-            # fexec.config['serverless']['runtime_memory'] = 4800
+            fexec.config['aws_lambda']['runtime_memory'] = 4800
             formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
-
+            with open("start_phase_2.json", 'w') as file:
+                json.dump(formatted_list, file)
             print("================== START PHASE 2 ======================")
 
             nr_phases = 0
@@ -224,7 +227,7 @@ def sort(EXPERIMENT_NUMBER):
 
             for future in fexec.futures:
                 stats.update({future.activation_id: future.stats})
-            fexec.plot(dst='plots/main_phase2')
+            fexec.plot(dst=f'plots_{size_prefix}_{nr_intervals}/main_phase2_{size_prefix}_intervals{nr_intervals}_ExpNr_{EXPERIMENT_NUMBER}')
 
             # Process remainings
             # if len(formatted_list) % number_of_lambda_sessions_phase_2 != 0:
@@ -233,13 +236,13 @@ def sort(EXPERIMENT_NUMBER):
             #                                                            formatted_list) // number_of_lambda_sessions_phase_2):])
             #     sort_content_result = fexec.get_result(sort_categories_futures)
 
-    with open(f"stats/stats_logging_{size_prefix}_ExpNr_{EXPERIMENT_NUMBER}.json", 'w') as stats_file:
+    with open(f"stats/stats_logging_{size_prefix}_ExpNr_{EXPERIMENT_NUMBER}_intervals_{nr_intervals}.json", 'w') as stats_file:
         json.dump(stats, stats_file)
     print("DONE")
 
 
 if __name__ == '__main__':
-    for i in range(1, 3):
+    for i in range(1, 11):
         print(f'Running EXPERIMENT_NUMBER={i} for prefix {size_prefix}')
         sort(i)
         print(f'Finished EXPERIMENT_NUMBER={i} for prefix {size_prefix}')

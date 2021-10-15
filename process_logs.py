@@ -35,13 +35,18 @@ def convert_string_ms_to_float_sec(duration):
 
 
 def process_logs(
+        experiment_config,
+        nr_intervals,
         EXECUTE_DOWNLOAD_LOGGING=True,
         EXECUTE_PROCESS_LOGGING=True,
+        REMOVE_CLOUDWATCH_LOGGING=False,
         REMOVE_S3_LOGGING=False,
         REMOVE_LOCAL_LOGGING=False
 ):
     BUCKET_NAME = 'bogdan-experiments'
-    LOGS_PREFIX = 'lithops_sorting_logs'
+    LOGS_PREFIX = f'lithops_sorting_logs_{experiment_config}_{nr_intervals}'
+    nr_report_request_id_found = 0
+    nr_report_without_init_time_found = 0
 
     s3_resource = boto3.resource('s3')
     bucket = s3_resource.Bucket(BUCKET_NAME)
@@ -60,6 +65,7 @@ def process_logs(
         tasks_ids = []
 
         log_groups = logs_client.describe_log_groups()
+        tasks = logs_client.describe_export_tasks()
 
         print("Create Tasks.")
         for log_group in log_groups['logGroups']:
@@ -122,7 +128,7 @@ def process_logs(
 
         # Process futures stats
         print("Read stats data")
-        stats_files = glob.glob(f'/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/stats/*')
+        stats_files = glob.glob(f'/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/stats/stats_logging_{experiment_config}_ExpNr_*_intervals_{nr_intervals}.json')
         for stats_file in stats_files:
             with open(stats_file, "r") as read_file:
                 data.update(json.load(read_file))
@@ -175,30 +181,33 @@ def process_logs(
             "Start write final file",
             "Finish write final file"
         ]
-        start_report_phrases = [
-            "START RequestId",
-            "REPORT RequestId",
-        ]
+
         download_interval_files_phrases = [
             "Start download interval file",
             "Finish download interval file"
         ]
 
+        if not os.path.isdir(f'/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/lithops_sorting_logs_{experiment_config}_{nr_intervals}/'):
+            os.mkdir(f'/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/lithops_sorting_logs_{experiment_config}_{nr_intervals}/')
         lithops_sorting_logs_dirs = glob.glob(
-            '/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/lithops_sorting_logs/*')
+            f'/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/lithops_sorting_logs_{experiment_config}_{nr_intervals}//*')
+
         for logs_dir in lithops_sorting_logs_dirs:
             if 'aws-logs-write-test' in logs_dir:
                 continue
             activations_logs_dirs = glob.glob(f'{logs_dir}/*')
             print("Unzip lithops_sorting_logs_dirs GZ Files")
             for activation_dir in activations_logs_dirs:
-                zip_file = f'{activation_dir}/000000.gz'
-                dest_file_name = f'{activation_dir}/000000'
-                with gzip.open(zip_file, 'rb') as f_in:
-                    with open(dest_file_name, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-
-                print("Finish unzipping. Start processing")
+                if not os.path.isfile(f'{activation_dir}/000000'):
+                    zip_file = f'{activation_dir}/000000.gz'
+                    dest_file_name = f'{activation_dir}/000000'
+                    with gzip.open(zip_file, 'rb') as f_in:
+                        with open(dest_file_name, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    print("Finish unzipping. Start processing")
+                else:
+                    dest_file_name = f'{activation_dir}/000000'
+                    # print("Skipped unzipping")
 
                 with open(dest_file_name, 'r') as log_file:
                     for line in log_file.readlines():
@@ -211,6 +220,7 @@ def process_logs(
                             data = update_request_data(data, worker_id, {'start_request': dt})
                             data = update_request_data(data, worker_id, {'start_request_timestamp': dt_timestamp})
                         elif "REPORT RequestId" in line:
+                            nr_report_request_id_found += 1
                             results = re.search(
                                 "REPORT RequestId: (.*)\tDuration: (.*)\tBilled Duration: (.*)\tMemory Size", line)
                             worker_id = results.group(1)
@@ -225,6 +235,7 @@ def process_logs(
                             except:
                                 init_duration = 0
                                 init_duration_float = 0
+                                nr_report_without_init_time_found += 1
 
                             data = update_request_data(data, worker_id, {
                                 "execution_duration": execution_duration,
@@ -337,17 +348,17 @@ def process_logs(
                 print(f"Experiment config {experiment_config}; Experiment number {experiment_number}; Number of logged functions: {len(exp_nr_data)}")
         for experiment_config, experiment_number_data in data_per_experiment.items():
             json_file = glob.glob(
-                f"/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/experiments_raw_data/results_{experiment_config}.json"
+                f"/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/experiments_raw_data/results_{experiment_config}_intervals_{nr_intervals}.json"
             )
             experiment_data = None
             if json_file:
-                with open(f"experiments_raw_data/results_{experiment_config}.json", 'r') as file:
+                with open(f"experiments_raw_data/results_{experiment_config}_intervals_{nr_intervals}.json", 'r') as file:
                     experiment_data = json.load(file)
             if experiment_data:
                 experiment_data.update(experiment_number_data)
             else:
                 experiment_data = experiment_number_data
-            with open(f"experiments_raw_data/results_{experiment_config}.json", 'w') as file:
+            with open(f"experiments_raw_data/results_{experiment_config}_intervals_{nr_intervals}.json", 'w') as file:
                 json.dump(experiment_data, file)
 
         # json_file = glob.glob(f"/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/experiments_raw_data/{EXPERIMENT_NAME}.json")
@@ -360,14 +371,13 @@ def process_logs(
         #
         # with open(f'experiments_raw_data/{EXPERIMENT_NAME}.json', 'w') as file:
         #     json.dump(data, file)
-
-    if REMOVE_S3_LOGGING:
+    if REMOVE_CLOUDWATCH_LOGGING:
         log_groups = logs_client.describe_log_groups()
-
         print("Removing log groups")
         for log_group in log_groups['logGroups']:
             logs_client.delete_log_group(logGroupName=log_group['logGroupName'])
 
+    if REMOVE_S3_LOGGING:
         print("Removing s3 logs")
         bucket.objects.filter(Prefix='lithops.jobs').delete()
         bucket.objects.filter(Prefix=LOGS_PREFIX).delete()
@@ -385,3 +395,5 @@ def process_logs(
                     os.remove(path)
         # os.remove('/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/main_logging.txt')
     print("DONE PROCESSING LOGS")
+    print(f"Number of report request id found: {nr_report_request_id_found}")
+    print(f"Number of report request id found without init time: {nr_report_without_init_time_found}")
