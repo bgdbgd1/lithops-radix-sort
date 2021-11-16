@@ -10,7 +10,7 @@ import boto3
 from S3File import S3File
 import logging
 
-size_prefix = '1gb-1000files'
+size_prefix = '100mb-1000files'
 num_subcats = 2
 nr_intervals = 256 * num_subcats
 input_prefix = f'{size_prefix}-input'
@@ -208,7 +208,7 @@ def sort(EXPERIMENT_NUMBER):
                                 [file_with_indexes['start_index'], file_with_indexes['end_index']]
 
                         })
-            fexec.config['aws_lambda']['runtime_memory'] = 4800
+            # fexec.config['aws_lambda']['runtime_memory'] = 4800
             formatted_list = [{'category_key_name': {key: value}} for key, value in formatted.items()]
             with open("start_phase_2.json", 'w') as file:
                 json.dump(formatted_list, file)
@@ -242,7 +242,7 @@ def sort(EXPERIMENT_NUMBER):
 
 
 if __name__ == '__main__':
-    for i in range(1, 11):
+    for i in range(1, 5):
         print(f'Running EXPERIMENT_NUMBER={i} for prefix {size_prefix}')
         sort(i)
         print(f'Finished EXPERIMENT_NUMBER={i} for prefix {size_prefix}')

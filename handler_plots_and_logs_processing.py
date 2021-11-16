@@ -1,6 +1,7 @@
 import time
 
-from create_boxplots_multiple_experiments import create_boxplots
+from create_boxplots_multiple_experiments import create_boxplots, generate_ecdf, \
+    generate_ecdf_all_intervals_all_functions
 from process_logs import process_logs
 from create_plots import create_plots
 
@@ -26,13 +27,16 @@ from create_plots import create_plots
 
 
 if __name__ == '__main__':
-    # create_boxplots('10mb-10files-binary')
+
+    # create_boxplots('100mb-1000files', 512)
+    # generate_ecdf_all_intervals_all_functions('100mb-1000files', 512)
     for i in range(1, 11):
-        create_plots('100mb-1000files', 512, i)
+        create_plots('1gb-100files', 512, i)
     # process_logs(
-    #     '1gb-1000files',
+    #     '100mb-1000files',
     #     512,
-    #     EXECUTE_DOWNLOAD_LOGGING=True,
+    #     EXECUTE_DOWNLOAD_LOGGING=False,
+    #     EXECUTE_UNZIP=True,
     #     EXECUTE_PROCESS_LOGGING=True,
     #     REMOVE_CLOUDWATCH_LOGGING=False,
     #     REMOVE_S3_LOGGING=False,

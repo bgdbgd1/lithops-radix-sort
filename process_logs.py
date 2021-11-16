@@ -38,6 +38,7 @@ def process_logs(
         experiment_config,
         nr_intervals,
         EXECUTE_DOWNLOAD_LOGGING=True,
+        EXECUTE_UNZIP=True,
         EXECUTE_PROCESS_LOGGING=True,
         REMOVE_CLOUDWATCH_LOGGING=False,
         REMOVE_S3_LOGGING=False,
@@ -120,6 +121,18 @@ def process_logs(
                     shutil.copyfileobj(f_in, f_out)
     else:
         print("Skip download logging.")
+
+    if EXECUTE_UNZIP:
+        # List files
+        gz_files = glob.glob("/Users/bogdan/scoala/thesis/repo-lithops-radix-sort/lithops-radix-sort/*.gz")
+
+        # Unzip GZ files
+        print("Unzip GZ Files")
+        for zip_file in gz_files:
+            dest_file_name = zip_file.split('.gz')[0]
+            with gzip.open(zip_file, 'rb') as f_in:
+                with open(dest_file_name, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
 
     if EXECUTE_PROCESS_LOGGING:
         # ------------------- PROCESS DATA ----------------------
